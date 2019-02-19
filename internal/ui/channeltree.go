@@ -76,7 +76,7 @@ func (channelTree *ChannelTree) LoadGuild(guildID string) error {
 
 	//Top level channel
 	for _, channel := range channels {
-		if channel.Type != discordgo.ChannelTypeGuildText || channel.ParentID != "" {
+		if channel.Type == discordgo.ChannelTypeGuildCategory || channel.ParentID != "" {
 			continue
 		}
 
@@ -97,7 +97,7 @@ func (channelTree *ChannelTree) LoadGuild(guildID string) error {
 
 	//Second level channel
 	for _, channel := range channels {
-		if channel.Type != discordgo.ChannelTypeGuildText || channel.ParentID == "" {
+		if channel.Type == discordgo.ChannelTypeGuildCategory || channel.ParentID == "" {
 			continue
 		}
 

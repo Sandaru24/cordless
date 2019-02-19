@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/Bios-Marcel/goclipimg"
+	"github.com/gordonklaus/portaudio"
+	"layeh.com/gopus"
 
 	"github.com/atotto/clipboard"
 
@@ -129,9 +131,66 @@ func NewWindow(app *tview.Application, discord *discordgo.Session) (*Window, err
 	channelTree.SetOnChannelSelect(func(channelID string) {
 		channel, cacheError := window.session.State.Channel(channelID)
 		if cacheError == nil {
-			loadError := window.LoadChannel(channel)
-			if loadError == nil {
-				channelTree.MarkChannelAsLoaded(channelID)
+			if channel.Type == discordgo.ChannelTypeGuildText {
+				loadError := window.LoadChannel(channel)
+				if loadError == nil {
+					channelTree.MarkChannelAsLoaded(channelID)
+				}
+			} else if channel.Type == discordgo.ChannelTypeGuildVoice {
+				connection, voiceError := window.session.ChannelVoiceJoin(window.selectedGuild.ID, channel.ID, true, false)
+				go func() {
+					if voiceError == nil {
+						defer connection.Disconnect()
+						audioInitError := portaudio.Initialize()
+						if audioInitError != nil {
+							fmt.Fprintln(window.commandView, "Error initializing audio: "+audioInitError.Error())
+							return
+						}
+						defer portaudio.Terminate()
+						out := make([]int16, 8192)
+						stream, streamError := portaudio.OpenDefaultStream(0, 1, 44100, len(out), &out)
+						if streamError != nil {
+							fmt.Fprintln(window.commandView, "Error opening audio output: "+streamError.Error())
+							return
+						}
+						defer stream.Close()
+
+						fmt.Fprintln(window.commandView, "Starting")
+						if streamStartError := stream.Start(); streamStartError != nil {
+							fmt.Fprintln(window.commandView, "Error starting stream: "+streamStartError.Error())
+							return
+						}
+
+						fmt.Fprintln(window.commandView, "Started")
+
+						defer stream.Stop()
+						decoder, decoderError := gopus.NewDecoder(48000, 2)
+						if decoderError != nil {
+							fmt.Fprintln(window.commandView, "Error establishing voice connection: "+decoderError.Error())
+							return
+						}
+
+						fmt.Fprintf(window.commandView, "Listening for packets: %v\n", connection.Ready)
+						var decodeError error
+						for {
+							packet := <-connection.OpusRecv
+							fmt.Fprintln(window.commandView, "Package received")
+
+							out, decodeError = decoder.Decode(packet.Opus, len(out), false)
+							if decodeError != nil {
+								fmt.Fprintln(window.commandView, "Error decoding: "+decodeError.Error())
+								return
+							}
+
+							if writeError := stream.Write(); writeError != nil {
+								fmt.Fprintln(window.commandView, "Error writing to output sink:"+writeError.Error())
+								return
+							}
+						}
+					} else {
+						fmt.Fprintln(window.commandView, "Error establishing voice connection: "+voiceError.Error())
+					}
+				}()
 			}
 		}
 	})
@@ -1154,6 +1213,7 @@ func (window *Window) LoadChannel(channel *discordgo.Channel) error {
 	}
 
 	discordgoplus.SortMessagesByTimestamp(messages)
+	fmt.Fprintln(window.commandView, "Loading channel "+channel.ID)
 
 	window.chatView.SetMessages(messages)
 	window.chatView.ClearSelection()
